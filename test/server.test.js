@@ -45,6 +45,42 @@ test('API returns useful validation errors and does not create invalid bookings'
   assert.deepEqual(await listed.json(), []);
 });
 
+test('API rejects an overlapping booking in the same room with 409 and preserves the existing booking', async (t) => {
+  const request = await setup(t);
+  const created = await request('/api/bookings', post(booking));
+  assert.equal(created.status, 201);
+  const conflicting = await request(
+    '/api/bookings',
+    post({ ...booking, title: 'Overlapping meeting', startTime: '2030-06-12T09:30:00Z', endTime: '2030-06-12T10:30:00Z' })
+  );
+  assert.equal(conflicting.status, 409);
+  assert.deepEqual(await conflicting.json(), { error: 'This room is already booked from 9:00 AM to 10:00 AM' });
+  const listed = await request('/api/bookings?roomId=cedar&date=2030-06-12');
+  assert.equal((await listed.json()).length, 1);
+});
+
+test('API allows a back-to-back booking in the same room', async (t) => {
+  const request = await setup(t);
+  await request('/api/bookings', post(booking));
+  const next = await request('/api/bookings', post({ ...booking, startTime: booking.endTime, endTime: '2030-06-12T11:00:00Z' }));
+  assert.equal(next.status, 201);
+});
+
+test('API allows an overlapping time range booked in a different room', async (t) => {
+  const request = await setup(t);
+  await request('/api/bookings', post(booking));
+  const other = await request('/api/bookings', post({ ...booking, roomId: 'maple' }));
+  assert.equal(other.status, 201);
+});
+
+test('API enforces the conflict rule identically for a request made directly to the API', async (t) => {
+  const request = await setup(t);
+  await request('/api/bookings', post(booking));
+  const direct = await request('/api/bookings', post({ ...booking, organizer: 'Direct API Caller' }));
+  assert.equal(direct.status, 409);
+  assert.deepEqual(await direct.json(), { error: 'This room is already booked from 9:00 AM to 10:00 AM' });
+});
+
 test('API requires valid room and date filters', async (t) => {
   const request = await setup(t);
   for (const query of ['', '?roomId=missing&date=2030-06-12', '?roomId=cedar&date=2030-02-30']) {
