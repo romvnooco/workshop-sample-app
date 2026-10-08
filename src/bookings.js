@@ -4,6 +4,10 @@ export class ValidationError extends Error {
   status = 400;
 }
 
+export class ConflictError extends Error {
+  status = 409;
+}
+
 function requireRoom(store, roomId) {
   if (!store.rooms.some((room) => room.id === roomId)) {
     throw new ValidationError('Choose an existing room.');
@@ -20,6 +24,33 @@ function parseTimestamp(value) {
     throw new ValidationError('Enter a valid date and time.');
   }
   return date.toISOString();
+}
+
+function findConflicts(store, roomId, startTime, endTime) {
+  return store.bookings
+    .filter((booking) => booking.roomId === roomId && startTime < booking.endTime && endTime > booking.startTime)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+}
+
+function formatClockTime(isoTimestamp) {
+  const hour = Number(isoTimestamp.slice(11, 13));
+  const minute = isoTimestamp.slice(14, 16);
+  const period = hour < 12 ? 'AM' : 'PM';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${minute} ${period}`;
+}
+
+function formatConflictMessage(conflicts) {
+  const intervals = conflicts.map((conflict, index) => {
+    const range = `${formatClockTime(conflict.startTime)} to ${formatClockTime(conflict.endTime)}`;
+    return index === 0 ? range : `from ${range}`;
+  });
+  const joined = intervals.length === 1
+    ? intervals[0]
+    : intervals.length === 2
+      ? `${intervals[0]} and ${intervals[1]}`
+      : `${intervals.slice(0, -1).join(', ')}, and ${intervals[intervals.length - 1]}`;
+  return `This room is already booked from ${joined}`;
 }
 
 export function listBookings(store, roomId, date) {
@@ -48,6 +79,10 @@ export function createBooking(store, input) {
   const endTime = parseTimestamp(input.endTime);
   if (startTime >= endTime) {
     throw new ValidationError('End time must be after start time.');
+  }
+  const conflicts = findConflicts(store, input.roomId, startTime, endTime);
+  if (conflicts.length > 0) {
+    throw new ConflictError(formatConflictMessage(conflicts));
   }
   const booking = {
     id: randomUUID(),
